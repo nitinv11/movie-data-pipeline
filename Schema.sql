@@ -1,104 +1,43 @@
-import pandas as pd
-import requests
-import pymysql
-import os
-from datetime import datetime
-from dotenv import load_dotenv
+CREATE DATABASE movie_pipeline;
+USE movie_pipeline;
 
-load_dotenv()
+CREATE TABLE IF NOT EXISTS movies (
+    movie_id INT PRIMARY KEY,
+    title VARCHAR(255),
+    release_year INT,
+    director VARCHAR(255),
+    plot TEXT,
+    box_office VARCHAR(50)
+);
 
-DB_CONFIG = {
-    "host": "127.0.0.1",
-    "user": "root",
-    "password": "Nitin@12",
-    "database": "movie_pipeline",
-    "port": 3306
-}
+CREATE TABLE IF NOT EXISTS genres (
+    genre_id INT AUTO_INCREMENT PRIMARY KEY,
+    genre_name VARCHAR(50) UNIQUE
+);
 
-OMDB_API_KEY = os.getenv("OMDB_API_KEY")
-OMDB_LIMIT = 300
+CREATE TABLE IF NOT EXISTS movie_genres (
+    movie_id INT,
+    genre_id INT,
+    PRIMARY KEY (movie_id, genre_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id),
+    FOREIGN KEY (genre_id) REFERENCES genres(genre_id)
+);
 
-def normalize_title(title):
-    if title.endswith(", The"):
-        return "The " + title.replace(", The", "")
-    return title
+CREATE TABLE IF NOT EXISTS ratings (
+    rating_id INT AUTO_INCREMENT PRIMARY KEY,
+    movie_id INT,
+    user_id INT,
+    rating FLOAT,
+    rating_timestamp DATETIME,
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id)
+);
+SELECT COUNT(*) FROM movies;
+SELECT COUNT(*) FROM ratings;
+SELECT COUNT(*) FROM movies WHERE director IS NOT NULL;
 
-def fetch_omdb(title):
-    try:
-        r = requests.get(
-            "http://www.omdbapi.com/",
-            params={"t": title, "apikey": OMDB_API_KEY},
-            timeout=5
-        ).json()
-        return r if r.get("Response") == "True" else {}
-    except:
-        return {}
 
-def main():
-    print("Starting ETL pipeline")
+SELECT COUNT(*) FROM movies;
+SELECT COUNT(*) FROM ratings;
+SELECT COUNT(*) FROM genres;
+SELECT COUNT(*) FROM movie_genres;
 
-    movies = pd.read_csv("movies.csv")
-    ratings = pd.read_csv("ratings.csv")
-
-    movies["release_year"] = movies["title"].str.extract(r"\((\d{4})\)")
-    movies["title_clean"] = movies["title"].str.replace(r"\s\(\d{4}\)", "", regex=True)
-
-    conn = pymysql.connect(**DB_CONFIG)
-    cur = conn.cursor()
-
-    for _, row in movies.iterrows():
-        omdb = {}
-        if row.name < OMDB_LIMIT:
-            omdb = fetch_omdb(normalize_title(row["title_clean"]))
-
-        cur.execute(
-            """
-            INSERT IGNORE INTO movies
-            (movie_id, title, release_year, director, plot, box_office)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                row["movieId"],
-                row["title_clean"],
-                row["release_year"],
-                omdb.get("Director"),
-                omdb.get("Plot"),
-                omdb.get("BoxOffice")
-            )
-        )
-
-        for genre in row["genres"].split("|"):
-            cur.execute(
-                "INSERT IGNORE INTO genres (genre_name) VALUES (%s)",
-                (genre,)
-            )
-            cur.execute(
-                """
-                INSERT IGNORE INTO movie_genres (movie_id, genre_id)
-                SELECT %s, genre_id FROM genres WHERE genre_name=%s
-                """,
-                (row["movieId"], genre)
-            )
-
-    for _, row in ratings.iterrows():
-        cur.execute(
-            """
-            INSERT IGNORE INTO ratings
-            (movie_id, user_id, rating, rating_timestamp)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (
-                row["movieId"],
-                row["userId"],
-                row["rating"],
-                datetime.fromtimestamp(row["timestamp"])
-            )
-        )
-
-    conn.commit()
-    conn.close()
-
-    print("ETL pipeline completed")
-
-if __name__ == "__main__":
-    main()
